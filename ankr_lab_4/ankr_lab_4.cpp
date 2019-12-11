@@ -1,6 +1,4 @@
-﻿#define _CRT_SECURE_NO_WARNINGS
-
-#include <Windows.h>
+﻿#include <Windows.h>
 #include <WinCrypt.h>
 #include <iostream>
 #include <vector>
