@@ -124,8 +124,10 @@ void set_key_info(HCRYPTKEY key_handler, const block_key_info& info)
 
 void get_hash(const char* filename, HCRYPTPROV csp_handler, ALG_ID alg_id, HCRYPTKEY key_handler, HCRYPTHASH& hash_handler)
 {
-	if (!CryptCreateHash(csp_handler, alg_id, key_handler, 0, &hash_handler))
-		throw descriptive_exception("create hash");
+	if (!CryptCreateHash(csp_handler, alg_id, key_handler, 0, &hash_handler)) {
+			throw descriptive_exception("create hash");
+
+	}
 	FILE* f = fopen(filename, "rb");
 	if (!f)
 		throw descriptive_exception("open file to read");
@@ -140,8 +142,9 @@ void get_hash(const char* filename, HCRYPTPROV csp_handler, ALG_ID alg_id, HCRYP
 
 void sign_file(const char* filename, HCRYPTPROV csp_handler, ALG_ID hash_id)
 {
-	HCRYPTHASH hash_handler;
-	get_hash(filename, csp_handler, hash_id, 0, hash_handler);
+	HCRYPTHASH hash_handler = 0;
+	HCRYPTKEY key_handler = 0;
+	get_hash(filename, csp_handler, hash_id, key_handler, hash_handler);
 	DWORD sign_len;
 	if (!CryptSignHash(hash_handler, AT_SIGNATURE, NULL, 0, NULL, &sign_len))
 		throw descriptive_exception("get sign len");
@@ -189,7 +192,7 @@ int main(int argc, const char** argv)
 	DWORD csp_type = PROV_RSA_AES;
 	auto csp_name = (LPTSTR) MS_ENH_RSA_AES_PROV;
 	std::string keyset_name = "dexxxed";
-	ALG_ID hash_id = CALG_MD5; // MAC
+	ALG_ID hash_id = CALG_MAC; // MAC
 
 	HCRYPTPROV csp_handler = 0;
 
