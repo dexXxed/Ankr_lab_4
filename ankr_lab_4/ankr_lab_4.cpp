@@ -192,7 +192,7 @@ int main(int argc, const char** argv)
 	DWORD csp_type = PROV_RSA_AES;
 	auto csp_name = (LPTSTR) MS_ENH_RSA_AES_PROV;
 	std::string keyset_name = "dexxxed";
-	ALG_ID hash_id = CALG_MAC; // MAC
+	ALG_ID hash_id = CALG_SHA; 
 
 	HCRYPTPROV csp_handler = 0;
 
