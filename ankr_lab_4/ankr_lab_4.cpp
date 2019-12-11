@@ -4,9 +4,17 @@
 #include <vector>
 #include <string>
 
-using std::cout;
-using std::endl;
-using std::cin;
+using namespace std;
+
+class descriptive_exception : public exception {
+public:
+	explicit descriptive_exception(const char* message) : msg_(message) {}
+
+	char const* what() const noexcept override { return msg_; }
+
+private:
+	const char* msg_;
+};
 
 struct csp_alg_properties
 {
@@ -28,12 +36,12 @@ void get_csp_containers(HCRYPTPROV handle, std::vector<std::string>& mas)
 	char buff[4096];
 	DWORD tmp = 4096;
 	if (!CryptGetProvParam(handle, PP_ENUMCONTAINERS, (BYTE*)&buff, &tmp, CRYPT_FIRST))
-		throw "in start reading conainers";
+		throw descriptive_exception("in start reading conainers");
 	mas.push_back(buff);
 	while (CryptGetProvParam(handle, PP_ENUMCONTAINERS, (BYTE*)&buff, &tmp, CRYPT_NEXT))
 		mas.push_back(buff);
 	if (GetLastError() != ERROR_NO_MORE_ITEMS)
-		throw "in reading conainers";
+		throw descriptive_exception("in reading conainers");
 }
 
 bool name_in_array(const std::string& name, const std::vector<std::string>& mas)
@@ -52,7 +60,7 @@ void get_csp_handler(DWORD csp_type, LPTSTR csp_name, const std::string keyset_n
 		if (GetLastError() == 0x80090016L)
 			goto mark_create_keycase;
 		else
-			throw "in get csp handle with 0 dwFlags";
+			throw descriptive_exception("in get csp handle with 0 dwFlags");
 	}
 	get_csp_containers(handler, containers);
 	if (name_in_array(keyset_name, containers))
@@ -60,7 +68,7 @@ void get_csp_handler(DWORD csp_type, LPTSTR csp_name, const std::string keyset_n
 	mark_open_exist_keycase:
 		CryptReleaseContext(handler, 0);
 		if (!CryptAcquireContext(&handler, (LPCWSTR) keyset_name.c_str(), csp_name, csp_type, 0))
-			throw "in get csp handle with exist key container";
+			throw descriptive_exception("in get csp handle with exist key container");
 		containers.clear();
 		get_csp_containers(handler, containers);
 	}
@@ -77,7 +85,7 @@ void get_csp_handler(DWORD csp_type, LPTSTR csp_name, const std::string keyset_n
 				goto mark_open_exist_keycase;
 			}
 			else
-				throw "in get csp handle with create key container";
+				throw descriptive_exception("in get csp handle with create key container");
 		}
 	}
 }
@@ -87,11 +95,11 @@ void get_alg_properties(HCRYPTPROV handler, DWORD alg_id, csp_alg_properties& pa
 	DWORD dword_size = sizeof(DWORD);
 	DWORD param_size = sizeof(param.enumalgs);
 	if (!CryptGetProvParam(handler, PP_ENUMALGS_EX, (BYTE*)&param.enumalgs, &param_size, CRYPT_FIRST))
-		throw "in start reading algorithms";
+		throw descriptive_exception("in start reading algorithms");
 	if (!CryptGetProvParam(handler, PP_KEYX_KEYSIZE_INC, (BYTE*)&param.keyx_key_inc, &dword_size, 0))
-		throw "in start reading keyx_inc";
+		throw descriptive_exception("in start reading keyx_inc");
 	if (!CryptGetProvParam(handler, PP_SIG_KEYSIZE_INC, (BYTE*)&param.sig_key_inc, &dword_size, 0))
-		throw "in start reading sig_inc";
+		throw descriptive_exception("in start reading sig_inc");
 	if (param.enumalgs.aiAlgid == alg_id)
 		return;
 	while (CryptGetProvParam(handler, PP_ENUMALGS_EX, (BYTE*)&param.enumalgs, &param_size, CRYPT_NEXT))
@@ -101,26 +109,26 @@ void get_alg_properties(HCRYPTPROV handler, DWORD alg_id, csp_alg_properties& pa
 	}
 	DWORD error = GetLastError();
 	if (error != ERROR_NO_MORE_ITEMS)
-		throw "in reading algorithms";
-	throw "algorithm_id was not found";
+		throw descriptive_exception("in reading algorithms");
+	throw descriptive_exception("algorithm_id was not found");
 }
 
 void set_key_info(HCRYPTKEY key_handler, const block_key_info& info)
 {
 	if (!CryptSetKeyParam(key_handler, KP_MODE, (BYTE*)&(info.mode), 0))
-		throw "in set key mode";
+		throw descriptive_exception("in set key mode");
 	if (!CryptSetKeyParam(key_handler, KP_IV, info.iv, 0))
-		throw "in set key iv";
+		throw descriptive_exception("in set key iv");
 }
 
 
 void get_hash(const char* filename, HCRYPTPROV csp_handler, ALG_ID alg_id, HCRYPTKEY key_handler, HCRYPTHASH& hash_handler)
 {
 	if (!CryptCreateHash(csp_handler, alg_id, key_handler, 0, &hash_handler))
-		throw "create hash";
+		throw descriptive_exception("create hash");
 	FILE* f = fopen(filename, "rb");
 	if (!f)
-		throw "open file to read";
+		throw descriptive_exception("open file to read");
 	int buff_size = 1024;
 	BYTE* buff = new BYTE[buff_size];
 	DWORD cur_len;
@@ -136,16 +144,16 @@ void sign_file(const char* filename, HCRYPTPROV csp_handler, ALG_ID hash_id)
 	get_hash(filename, csp_handler, hash_id, 0, hash_handler);
 	DWORD sign_len;
 	if (!CryptSignHash(hash_handler, AT_SIGNATURE, NULL, 0, NULL, &sign_len))
-		throw "get sign len";
+		throw descriptive_exception("get sign len");
 	BYTE* sign_data = new BYTE[sign_len];
 	if (!CryptSignHash(hash_handler, AT_SIGNATURE, NULL, 0, sign_data, &sign_len))
-		throw "get sign";
+		throw descriptive_exception("get sign");
 	CryptDestroyHash(hash_handler);
 	char signname[FILENAME_MAX];
 	sprintf(signname, "%s.sign", filename);
 	FILE* f = fopen(signname, "wb");
 	if (!f)
-		throw "open file to write";
+		throw descriptive_exception("open file to write");
 	fwrite(&sign_len, 1, sizeof(sign_len), f);
 	fwrite(sign_data, 1, sign_len, f);
 	fclose(f);
@@ -159,7 +167,7 @@ bool verify_file(const char* filename, HCRYPTPROV csp_handler, ALG_ID hash_id)
 	sprintf(signname, "%s.sign", filename);
 	FILE* f = fopen(signname, "rb");
 	if (!f)
-		"open sign-file to read";
+		throw descriptive_exception("open sign-file to read");
 	fread(&sign_len, 1, sizeof(sign_len), f);
 	BYTE* sign_data = new BYTE[sign_len];
 	fread(sign_data, 1, sign_len, f);
@@ -168,7 +176,7 @@ bool verify_file(const char* filename, HCRYPTPROV csp_handler, ALG_ID hash_id)
 	get_hash(filename, csp_handler, hash_id, 0, hash_handler);
 	HCRYPTKEY pubkey_handler;
 	if (!CryptGetUserKey(csp_handler, AT_SIGNATURE, &pubkey_handler))
-		throw "get signature public key";
+		throw descriptive_exception("get signature public key");
 	BOOL result = CryptVerifySignature(hash_handler, sign_data, sign_len, pubkey_handler, NULL, 0);
 	CryptDestroyHash(hash_handler);
 	delete[] sign_data;
@@ -182,15 +190,17 @@ int main(int argc, const char** argv)
 	auto csp_name = (LPTSTR) MS_ENH_RSA_AES_PROV;
 	DWORD k = 11;
 	std::string keyset_name = "dexxxed";
-	ALG_ID hash_id = 32770; //MD4
+	ALG_ID hash_id = 32770; // MD4
 	HCRYPTPROV csp_handler = 0;
 
 	if (argc == 1)
 	{
-		cout << "bad use, use one of the options below" << endl;
-		cout << "lab5.exe sign file_to_sign" << endl;
-		cout << "lab5.exe verify file_to-verify" << endl;
-		return 0;
+		cout << "So, welcome to help!" << endl;
+		cout << "Bad using, use one of the options below:" << endl;
+		cout << "ankr_lab_4.exe sign [file_to_sign]" << endl;
+		cout << "ankr_lab_4.exe verify [file_to_verify]" << endl;
+		system("pause");
+		return -1;
 	}
 	try
 	{
@@ -207,11 +217,15 @@ int main(int argc, const char** argv)
 				cout << "BAD SIGN" << endl;
 		}
 		else
-			throw "bad 1 argument";
+			throw descriptive_exception("bad 1 argument");
 	}
-	catch (const char* error)
-	{
-		cout << "Error " << error << endl;
+	catch (exception & error) {
+		cout << "Error message: " << error.what() << endl;
+		cout << "System Error Code: " << GetLastError() << endl;
+		cout << "You can read more about System Error Codes here:" <<
+			"https://docs.microsoft.com/ru-ru/windows/win32/debug/system-error-codes" << endl;
+		system("PAUSE");
+		return -1;
 	}
 	return 0;
 }
