@@ -1,20 +1,219 @@
-﻿// ankr_lab_4.cpp : Этот файл содержит функцию "main". Здесь начинается и заканчивается выполнение программы.
-//
+﻿#define _CRT_SECURE_NO_WARNINGS
 
+#include <Windows.h>
+#include <WinCrypt.h>
 #include <iostream>
+#include <vector>
+#include <string>
 
-int main()
+using std::cout;
+using std::endl;
+using std::cin;
+
+struct csp_alg_properties
 {
-    std::cout << "Hello World!\n";
+	PROV_ENUMALGS_EX enumalgs;
+	DWORD keyx_key_inc;
+	DWORD sig_key_inc;
+};
+
+struct block_key_info
+{
+	DWORD mode;
+	DWORD block_byte_size;
+	BYTE* iv;
+};
+
+
+void get_csp_containers(HCRYPTPROV handle, std::vector<std::string>& mas)
+{
+	char buff[4096];
+	DWORD tmp = 4096;
+	if (!CryptGetProvParam(handle, PP_ENUMCONTAINERS, (BYTE*)&buff, &tmp, CRYPT_FIRST))
+		throw "in start reading conainers";
+	mas.push_back(buff);
+	while (CryptGetProvParam(handle, PP_ENUMCONTAINERS, (BYTE*)&buff, &tmp, CRYPT_NEXT))
+		mas.push_back(buff);
+	if (GetLastError() != ERROR_NO_MORE_ITEMS)
+		throw "in reading conainers";
 }
 
-// Запуск программы: CTRL+F5 или меню "Отладка" > "Запуск без отладки"
-// Отладка программы: F5 или меню "Отладка" > "Запустить отладку"
+bool name_in_array(const std::string& name, const std::vector<std::string>& mas)
+{
+	for (const std::string& a : mas)
+		if (a == name)
+			return true;
+	return false;
+}
 
-// Советы по началу работы 
-//   1. В окне обозревателя решений можно добавлять файлы и управлять ими.
-//   2. В окне Team Explorer можно подключиться к системе управления версиями.
-//   3. В окне "Выходные данные" можно просматривать выходные данные сборки и другие сообщения.
-//   4. В окне "Список ошибок" можно просматривать ошибки.
-//   5. Последовательно выберите пункты меню "Проект" > "Добавить новый элемент", чтобы создать файлы кода, или "Проект" > "Добавить существующий элемент", чтобы добавить в проект существующие файлы кода.
-//   6. Чтобы снова открыть этот проект позже, выберите пункты меню "Файл" > "Открыть" > "Проект" и выберите SLN-файл.
+void get_csp_handler(DWORD csp_type, LPTSTR csp_name, const std::string keyset_name, HCRYPTPROV& handler)
+{
+	std::vector<std::string> containers;
+	if (!CryptAcquireContext(&handler, NULL, csp_name, csp_type, 0))
+	{
+		if (GetLastError() == 0x80090016L)
+			goto mark_create_keycase;
+		else
+			throw "in get csp handle with 0 dwFlags";
+	}
+	get_csp_containers(handler, containers);
+	if (name_in_array(keyset_name, containers))
+	{
+	mark_open_exist_keycase:
+		CryptReleaseContext(handler, 0);
+		if (!CryptAcquireContext(&handler, (LPCWSTR) keyset_name.c_str(), csp_name, csp_type, 0))
+			throw "in get csp handle with exist key container";
+		containers.clear();
+		get_csp_containers(handler, containers);
+	}
+	else
+	{
+	mark_create_keycase:
+		cout << "ctreate " << keyset_name << " keycontainer" << endl;
+		CryptReleaseContext(handler, 0);
+		if (!CryptAcquireContext(&handler, (LPCWSTR) keyset_name.c_str(), csp_name, csp_type, CRYPT_NEWKEYSET))
+		{
+			if (GetLastError() == 0x8009000FL)
+			{
+				//cout << "Key set " << keyset_name << " is already exist, try open" << endl;
+				goto mark_open_exist_keycase;
+			}
+			else
+				throw "in get csp handle with create key container";
+		}
+	}
+}
+
+void get_alg_properties(HCRYPTPROV handler, DWORD alg_id, csp_alg_properties& param)
+{
+	DWORD dword_size = sizeof(DWORD);
+	DWORD param_size = sizeof(param.enumalgs);
+	if (!CryptGetProvParam(handler, PP_ENUMALGS_EX, (BYTE*)&param.enumalgs, &param_size, CRYPT_FIRST))
+		throw "in start reading algorithms";
+	if (!CryptGetProvParam(handler, PP_KEYX_KEYSIZE_INC, (BYTE*)&param.keyx_key_inc, &dword_size, 0))
+		throw "in start reading keyx_inc";
+	if (!CryptGetProvParam(handler, PP_SIG_KEYSIZE_INC, (BYTE*)&param.sig_key_inc, &dword_size, 0))
+		throw "in start reading sig_inc";
+	if (param.enumalgs.aiAlgid == alg_id)
+		return;
+	while (CryptGetProvParam(handler, PP_ENUMALGS_EX, (BYTE*)&param.enumalgs, &param_size, CRYPT_NEXT))
+	{
+		if (param.enumalgs.aiAlgid == alg_id)
+			return;
+	}
+	DWORD error = GetLastError();
+	if (error != ERROR_NO_MORE_ITEMS)
+		throw "in reading algorithms";
+	throw "algorithm_id was not found";
+}
+
+void set_key_info(HCRYPTKEY key_handler, const block_key_info& info)
+{
+	if (!CryptSetKeyParam(key_handler, KP_MODE, (BYTE*)&(info.mode), 0))
+		throw "in set key mode";
+	if (!CryptSetKeyParam(key_handler, KP_IV, info.iv, 0))
+		throw "in set key iv";
+}
+
+
+void get_hash(const char* filename, HCRYPTPROV csp_handler, ALG_ID alg_id, HCRYPTKEY key_handler, HCRYPTHASH& hash_handler)
+{
+	if (!CryptCreateHash(csp_handler, alg_id, key_handler, 0, &hash_handler))
+		throw "create hash";
+	FILE* f = fopen(filename, "rb");
+	if (!f)
+		throw "open file to read";
+	int buff_size = 1024;
+	BYTE* buff = new BYTE[buff_size];
+	DWORD cur_len;
+	while (cur_len = fread(buff, 1, buff_size, f))
+		CryptHashData(hash_handler, buff, cur_len, 0);
+	delete[] buff;
+	fclose(f);
+}
+
+void sign_file(const char* filename, HCRYPTPROV csp_handler, ALG_ID hash_id)
+{
+	HCRYPTHASH hash_handler;
+	get_hash(filename, csp_handler, hash_id, 0, hash_handler);
+	DWORD sign_len;
+	if (!CryptSignHash(hash_handler, AT_SIGNATURE, NULL, 0, NULL, &sign_len))
+		throw "get sign len";
+	BYTE* sign_data = new BYTE[sign_len];
+	if (!CryptSignHash(hash_handler, AT_SIGNATURE, NULL, 0, sign_data, &sign_len))
+		throw "get sign";
+	CryptDestroyHash(hash_handler);
+	char signname[FILENAME_MAX];
+	sprintf(signname, "%s.sign", filename);
+	FILE* f = fopen(signname, "wb");
+	if (!f)
+		throw "open file to write";
+	fwrite(&sign_len, 1, sizeof(sign_len), f);
+	fwrite(sign_data, 1, sign_len, f);
+	fclose(f);
+	delete[] sign_data;
+}
+
+bool verify_file(const char* filename, HCRYPTPROV csp_handler, ALG_ID hash_id)
+{
+	DWORD sign_len;
+	char signname[FILENAME_MAX];
+	sprintf(signname, "%s.sign", filename);
+	FILE* f = fopen(signname, "rb");
+	if (!f)
+		"open sign-file to read";
+	fread(&sign_len, 1, sizeof(sign_len), f);
+	BYTE* sign_data = new BYTE[sign_len];
+	fread(sign_data, 1, sign_len, f);
+	fclose(f);
+	HCRYPTHASH hash_handler;
+	get_hash(filename, csp_handler, hash_id, 0, hash_handler);
+	HCRYPTKEY pubkey_handler;
+	if (!CryptGetUserKey(csp_handler, AT_SIGNATURE, &pubkey_handler))
+		throw "get signature public key";
+	BOOL result = CryptVerifySignature(hash_handler, sign_data, sign_len, pubkey_handler, NULL, 0);
+	CryptDestroyHash(hash_handler);
+	delete[] sign_data;
+	return result;
+}
+
+
+int main(int argc, const char** argv)
+{
+	DWORD csp_type = PROV_RSA_AES;
+	auto csp_name = (LPTSTR) MS_ENH_RSA_AES_PROV;
+	DWORD k = 11;
+	std::string keyset_name = "dexxxed";
+	ALG_ID hash_id = 32770; //MD4
+	HCRYPTPROV csp_handler = 0;
+
+	if (argc == 1)
+	{
+		cout << "bad use, use one of the options below" << endl;
+		cout << "lab5.exe sign file_to_sign" << endl;
+		cout << "lab5.exe verify file_to-verify" << endl;
+		return 0;
+	}
+	try
+	{
+		get_csp_handler(csp_type, csp_name, keyset_name, csp_handler);
+		if (!strcmp(argv[1], "sign"))
+		{
+			sign_file(argv[2], csp_handler, hash_id);
+		}
+		else if (!strcmp(argv[1], "verify"))
+		{
+			if (verify_file(argv[2], csp_handler, hash_id))
+				cout << "sign correct" << endl;
+			else
+				cout << "BAD SIGN" << endl;
+		}
+		else
+			throw "bad 1 argument";
+	}
+	catch (const char* error)
+	{
+		cout << "Error " << error << endl;
+	}
+	return 0;
+}
