@@ -188,9 +188,9 @@ int main(int argc, const char** argv)
 {
 	DWORD csp_type = PROV_RSA_AES;
 	auto csp_name = (LPTSTR) MS_ENH_RSA_AES_PROV;
-	DWORD k = 11;
 	std::string keyset_name = "dexxxed";
-	ALG_ID hash_id = 32770; // MD4
+	ALG_ID hash_id = CALG_MD5; // MAC
+
 	HCRYPTPROV csp_handler = 0;
 
 	if (argc == 1)
